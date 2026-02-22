@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// debugCrossings adds small markers for the fix immediately before and after
+// each cylinder crossing, making it easy to inspect interpolation accuracy.
+// Flip to true locally when investigating scoring edge cases.
+const debugCrossings = true
+
 // jsLatLon is a lat/lon coordinate for JSON serialisation into Leaflet.
 type jsLatLon struct {
 	Lat float64 `json:"lat"`
@@ -28,6 +33,15 @@ type jsSplit struct {
 	Time    string  `json:"time"`
 	Elapsed string  `json:"elapsed"` // empty for the start split
 	Leg     string  `json:"leg"`     // empty for the start split
+}
+
+// jsDebugPoint is a fix immediately before or after a cylinder crossing,
+// emitted only when debugCrossings is true.
+type jsDebugPoint struct {
+	Lat   float64 `json:"lat"`
+	Lon   float64 `json:"lon"`
+	Label string  `json:"label"` // e.g. "before: D14 EXIT" or "after: D14 EXIT"
+	Time  string  `json:"time"`
 }
 
 // WriteHTML writes a Leaflet.js HTML map to filename showing:
@@ -88,6 +102,36 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split)
 		})
 	}
 
+	// Optionally collect the fix immediately before and after each crossing.
+	var debugPoints []jsDebugPoint
+	if debugCrossings {
+		for _, s := range splits {
+			idx := s.Index
+			wpLabel := s.Waypoint.Name
+			if s.Waypoint.Type != WPTypeNormal {
+				wpLabel += " " + s.Waypoint.Type.String()
+			}
+			if idx > 0 {
+				b := flight.Fixes[idx-1]
+				debugPoints = append(debugPoints, jsDebugPoint{
+					Lat:   b.Lat,
+					Lon:   b.Lon,
+					Label: "before: " + wpLabel,
+					Time:  b.Timestamp.Format("15:04:05 UTC"),
+				})
+			}
+			if idx < len(flight.Fixes) {
+				a := flight.Fixes[idx]
+				debugPoints = append(debugPoints, jsDebugPoint{
+					Lat:   a.Lat,
+					Lon:   a.Lon,
+					Label: "after: " + wpLabel,
+					Time:  a.Timestamp.Format("15:04:05 UTC"),
+				})
+			}
+		}
+	}
+
 	trackJSON, err := json.Marshal(track)
 	if err != nil {
 		return fmt.Errorf("marshalling track: %w", err)
@@ -100,13 +144,17 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split)
 	if err != nil {
 		return fmt.Errorf("marshalling splits: %w", err)
 	}
+	debugJSON, err := json.Marshal(debugPoints)
+	if err != nil {
+		return fmt.Errorf("marshalling debug points: %w", err)
+	}
 
 	title := flight.Date.Format("2006-01-02")
 	if flight.PilotName != "" {
 		title = flight.PilotName + " - " + title
 	}
 
-	_, err = fmt.Fprintf(f, leafletHTML, title, title, trackJSON, wpsJSON, splitsJSON)
+	_, err = fmt.Fprintf(f, leafletHTML, title, title, trackJSON, wpsJSON, splitsJSON, debugJSON)
 	return err
 }
 
@@ -144,9 +192,10 @@ const leafletHTML = `<!DOCTYPE html>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-var trackPoints = %s;
-var waypoints   = %s;
-var splits      = %s;
+var trackPoints  = %s;
+var waypoints    = %s;
+var splits       = %s;
+var debugPoints  = %s;
 
 
 var map = L.map('map')
@@ -197,6 +246,17 @@ splits.forEach(function(s) {
     radius: 6, color: '#f39c12', fillColor: '#f39c12', fillOpacity: 1, weight: 2
   }).bindPopup(lines.join('<br>')).addTo(map);
 });
+
+// -- Debug crossing points (before/after each split, only when debugCrossings=true)
+if (debugPoints) {
+  debugPoints.forEach(function(p) {
+    var isBefore = p.label.indexOf('before:') === 0;
+    var color = isBefore ? '#8e44ad' : '#1abc9c';
+    L.circleMarker([p.lat, p.lon], {
+      radius: 4, color: color, fillColor: color, fillOpacity: 1, weight: 2
+    }).bindTooltip('<b>' + p.label + '</b><br>' + p.time).addTo(map);
+  });
+}
 
 // -- Fit bounds
 if (trackLayer) {
