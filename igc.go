@@ -20,11 +20,36 @@ type Fix struct {
 	Valid       bool    // true if fix validity is 'A' (3D fix), false for 'V'
 }
 
+// WaypointType describes the role a waypoint plays in scoring.
+type WaypointType int
+
+const (
+	WPTypeNormal WaypointType = iota // standard entry turnpoint
+	WPTypeExit                       // start: pilot must EXIT the cylinder to start the clock
+	WPTypeESS                        // end of speed section (last timed gate)
+	WPTypeGoal                       // goal/finish cylinder
+)
+
+func (t WaypointType) String() string {
+	switch t {
+	case WPTypeExit:
+		return "EXIT"
+	case WPTypeESS:
+		return "ES"
+	case WPTypeGoal:
+		return "GOAL"
+	default:
+		return ""
+	}
+}
+
 // Waypoint represents a task waypoint, typically from a C record or external file.
 type Waypoint struct {
-	Lat  float64
-	Lon  float64
-	Name string // raw description from the C record (may include radius data)
+	Lat    float64
+	Lon    float64
+	Name   string       // waypoint identifier
+	Radius float64      // cylinder radius in meters (0 = not specified)
+	Type   WaypointType // role in scoring (normal entry, exit-start, ESS, goal)
 }
 
 // Flight holds all data parsed from an IGC file.

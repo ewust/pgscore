@@ -1,24 +1,61 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"time"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <flight.igc>\n", os.Args[0])
+	taskFile := flag.String("task", "", "task definition file (e.g. inandout.txt)")
+	waypointsFile := flag.String("waypoints", "", "OziExplorer waypoints file (.wpt)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		flag.Usage()
 		os.Exit(1)
 	}
+	igcFile := flag.Arg(0)
 
-	flight, err := ParseIGC(os.Args[1])
+	// Parse the IGC file.
+	flight, err := ParseIGC(igcFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing IGC file: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("=== IGC Flight Summary ===\n")
+	// Optionally load an external waypoints database.
+	var wpDB map[string]Waypoint
+	if *waypointsFile != "" {
+		wpDB, err = ParseWaypointFile(*waypointsFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing waypoints file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Loaded %d waypoints from %s\n", len(wpDB), *waypointsFile)
+	}
+
+	// Optionally load an external task file (requires waypoints database).
+	var externalTask []Waypoint
+	if *taskFile != "" {
+		if wpDB == nil {
+			fmt.Fprintf(os.Stderr, "Error: --task requires --waypoints\n")
+			os.Exit(1)
+		}
+		externalTask, err = ParseTaskFile(*taskFile, wpDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing task file: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Print flight summary.
+	fmt.Printf("\n=== IGC Flight Summary ===\n")
 	fmt.Printf("Date:   %s\n", flight.Date.Format("2006-01-02"))
 	if flight.PilotName != "" {
 		fmt.Printf("Pilot:  %s\n", flight.PilotName)
@@ -41,15 +78,26 @@ func main() {
 		fmt.Printf("Duration: %s\n", formatDuration(duration))
 	}
 
-	if len(flight.Task) > 0 {
-		fmt.Printf("\n--- Declared Task: %d waypoints ---\n", len(flight.Task))
-		for i, wp := range flight.Task {
-			label := taskLabel(i, len(flight.Task))
-			fmt.Printf("  %d  %-8s  lat=%9.5f  lon=%10.5f  %s\n",
-				i+1, label, wp.Lat, wp.Lon, wp.Name)
+	// Show task: prefer external task file, fall back to IGC-declared task.
+	task := flight.Task
+	taskSource := "IGC declared"
+	if externalTask != nil {
+		task = externalTask
+		taskSource = *taskFile
+	}
+
+	if len(task) > 0 {
+		fmt.Printf("\n--- Task (%s): %d waypoints ---\n", taskSource, len(task))
+		for i, wp := range task {
+			typeStr := wp.Type.String()
+			if typeStr == "" {
+				typeStr = "enter"
+			}
+			fmt.Printf("  %d  lat=%9.5f  lon=%10.5f  r=%6gm  %-5s  %s\n",
+				i+1, wp.Lat, wp.Lon, wp.Radius, typeStr, wp.Name)
 		}
 	} else {
-		fmt.Printf("\nNo task declared in IGC file.\n")
+		fmt.Printf("\nNo task loaded.\n")
 	}
 }
 
