@@ -99,7 +99,8 @@ func main() {
 				i+1, wp.Lat, wp.Lon, wp.Radius, typeStr, wp.Name)
 		}
 
-		splits := ScoreFlight(flight.Fixes, task, *interpolate)
+		result := ScoreFlight(flight.Fixes, task, *interpolate)
+		splits := result.Splits
 		fmt.Printf("\n--- Splits (%d/%d waypoints achieved) ---\n", len(splits), len(task))
 		var startTime time.Time
 		for i, s := range splits {
@@ -115,7 +116,14 @@ func main() {
 					formatDuration(elapsed), formatDuration(leg))
 			}
 		}
-		printTaskResult(splits, task, startTime)
+		if len(splits) > 0 {
+			fmt.Printf("  Speed time: %s\n", formatDuration(result.SpeedTime))
+			if result.TaskComplete {
+				fmt.Printf("  Task complete.\n")
+			} else {
+				fmt.Printf("  Task not complete.\n")
+			}
+		}
 
 		if *htmlFile != "" {
 			if err := WriteHTML(*htmlFile, flight, task, splits); err != nil {
@@ -160,61 +168,6 @@ func taskLabel(i, total int) string {
 		return "Finish"
 	default:
 		return fmt.Sprintf("TP%d", i-1)
-	}
-}
-
-// printTaskResult prints the speed time and task-completion status.
-//
-// Speed time is measured from the first split (start) to the ESS split.
-// If the task has no ESS waypoint, speed time falls back to start->last split.
-// Task completion requires reaching the GOAL waypoint (if one exists in the task).
-func printTaskResult(splits []Split, task []Waypoint, startTime time.Time) {
-	if len(splits) == 0 {
-		return
-	}
-
-	// Determine whether the task declares ESS and/or GOAL.
-	taskHasESS, taskHasGoal := false, false
-	for _, wp := range task {
-		if wp.Type == WPTypeESS {
-			taskHasESS = true
-		}
-		if wp.Type == WPTypeGoal {
-			taskHasGoal = true
-		}
-	}
-
-	// Find the ESS and GOAL splits actually achieved.
-	var essSplit, goalSplit Split
-	essReached, goalReached := false, false
-	for _, s := range splits {
-		if s.Waypoint.Type == WPTypeESS && !essReached {
-			essSplit = s
-			essReached = true
-		}
-		if s.Waypoint.Type == WPTypeGoal && !goalReached {
-			goalSplit = s
-			goalReached = true
-		}
-	}
-	_ = goalSplit // referenced only for goalReached check above
-
-	// Speed time: start -> ESS (or start -> last split if no ESS in task).
-	if taskHasESS && essReached {
-		fmt.Printf("  Speed time (start to ESS): %s\n", formatDuration(essSplit.Time.Sub(startTime)))
-	} else if !taskHasESS && len(splits) == len(task) {
-		fmt.Printf("  Speed time: %s\n", formatDuration(splits[len(splits)-1].Time.Sub(startTime)))
-	}
-
-	// Task completion: requires GOAL if the task has one.
-	if taskHasGoal {
-		if goalReached {
-			fmt.Printf("  Task complete.\n")
-		} else {
-			fmt.Printf("  Task not complete (did not reach goal).\n")
-		}
-	} else if len(splits) == len(task) {
-		fmt.Printf("  Task complete.\n")
 	}
 }
 

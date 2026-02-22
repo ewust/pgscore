@@ -13,12 +13,21 @@ type Split struct {
 	Index int // index of the fix in the fixes array at/just after achievement
 }
 
+// ScoreResult holds the outcome of scoring a flight against a task.
+type ScoreResult struct {
+	Splits    []Split       // one per achieved waypoint, in task order
+	SpeedTime time.Duration // elapsed time from the start to the ESS split;
+	//                             falls back to start->last split if the task has no ESS
+	TaskComplete bool // true if the GOAL waypoint was reached (or all waypoints
+	//                             were achieved when the task has no GOAL)
+}
+
 // ScoreFlight scores a flight against an ordered task.
 //
 // Every crossing of the first waypoint is tried as a possible start. For each
 // start candidate the remaining waypoints are scored greedily (earliest
 // crossing wins). The attempt that completes the most waypoints wins; ties are
-// broken by shortest total time.
+// broken by shortest SpeedTime.
 //
 // Waypoint types determine the achievement condition:
 //   - WPTypeExit  (start): achieved when the pilot EXITS the cylinder (inside→outside).
@@ -27,14 +36,14 @@ type Split struct {
 // If interpolate is false (default), Split.Time is the timestamp of the first
 // fix that satisfies the condition. If true, it is linearly interpolated to the
 // exact moment the pilot crossed the cylinder boundary.
-func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) []Split {
+func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) ScoreResult {
 	if len(fixes) == 0 || len(task) == 0 {
-		return nil
+		return ScoreResult{}
 	}
 
 	startCrossings := findAllCrossings(fixes, 0, task[0], interpolate)
 	if len(startCrossings) == 0 {
-		return nil
+		return ScoreResult{}
 	}
 
 	var best []Split
@@ -44,7 +53,51 @@ func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) []Split {
 			best = attempt
 		}
 	}
-	return best
+	return buildResult(best, task)
+}
+
+// buildResult constructs a ScoreResult from the best split sequence and task.
+func buildResult(splits []Split, task []Waypoint) ScoreResult {
+	if len(splits) == 0 {
+		return ScoreResult{}
+	}
+
+	taskHasESS, taskHasGoal := false, false
+	for _, wp := range task {
+		if wp.Type == WPTypeESS {
+			taskHasESS = true
+		}
+		if wp.Type == WPTypeGoal {
+			taskHasGoal = true
+		}
+	}
+
+	startTime := splits[0].Time
+	var speedTime time.Duration
+	taskComplete := false
+
+	for _, s := range splits {
+		if taskHasESS && s.Waypoint.Type == WPTypeESS {
+			speedTime = s.Time.Sub(startTime)
+		}
+		if taskHasGoal && s.Waypoint.Type == WPTypeGoal {
+			taskComplete = true
+		}
+	}
+
+	// Fallbacks when the task has no ESS or no GOAL.
+	if !taskHasESS {
+		speedTime = splits[len(splits)-1].Time.Sub(startTime)
+	}
+	if !taskHasGoal && len(splits) == len(task) {
+		taskComplete = true
+	}
+
+	return ScoreResult{
+		Splits:       splits,
+		SpeedTime:    speedTime,
+		TaskComplete: taskComplete,
+	}
 }
 
 // scoreFrom greedily scores task[1:] starting from the given start split,
