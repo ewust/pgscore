@@ -15,9 +15,10 @@ type Split struct {
 
 // ScoreFlight scores a flight against an ordered task.
 //
-// It walks through the task waypoints in order, finding the time when each
-// cylinder was achieved. It stops early if the pilot did not complete the full
-// task, returning only the achieved splits.
+// Every crossing of the first waypoint is tried as a possible start. For each
+// start candidate the remaining waypoints are scored greedily (earliest
+// crossing wins). The attempt that completes the most waypoints wins; ties are
+// broken by shortest total time.
 //
 // Waypoint types determine the achievement condition:
 //   - WPTypeExit  (start): achieved when the pilot EXITS the cylinder (inside→outside).
@@ -31,10 +32,27 @@ func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) []Split {
 		return nil
 	}
 
-	var splits []Split
-	searchFrom := 0
+	startCrossings := findAllCrossings(fixes, 0, task[0], interpolate)
+	if len(startCrossings) == 0 {
+		return nil
+	}
 
-	for _, wp := range task {
+	var best []Split
+	for _, start := range startCrossings {
+		attempt := scoreFrom(fixes, task, start, interpolate)
+		if isBetter(attempt, best) {
+			best = attempt
+		}
+	}
+	return best
+}
+
+// scoreFrom greedily scores task[1:] starting from the given start split,
+// taking the earliest crossing of each subsequent waypoint in order.
+func scoreFrom(fixes []Fix, task []Waypoint, start Split, interpolate bool) []Split {
+	splits := []Split{start}
+	searchFrom := start.Index
+	for _, wp := range task[1:] {
 		split, found, next := findAchievement(fixes, searchFrom, wp, interpolate)
 		if !found {
 			break
@@ -42,8 +60,61 @@ func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) []Split {
 		splits = append(splits, split)
 		searchFrom = next
 	}
-
 	return splits
+}
+
+// findAllCrossings returns every achievement of wp in fixes[from:].
+// After each crossing, the search advances past the pilot's exit from the
+// cylinder so the next distinct crossing can be found.
+func findAllCrossings(fixes []Fix, from int, wp Waypoint, interpolate bool) []Split {
+	var all []Split
+	searchFrom := from
+	for {
+		split, found, achievedIdx := findAchievement(fixes, searchFrom, wp, interpolate)
+		if !found {
+			break
+		}
+		all = append(all, split)
+		// Advance past this crossing so the next call finds a new one.
+		// For EXIT: achievedIdx is the first fix outside; findExit naturally
+		//           scans forward from there to find the next re-entry.
+		// For ENTRY: achievedIdx is the first fix inside; advance to the
+		//            first fix outside before searching again.
+		if wp.Type == WPTypeExit {
+			searchFrom = achievedIdx
+		} else {
+			searchFrom = firstOutsideIdx(fixes, achievedIdx, wp)
+		}
+		if searchFrom >= len(fixes) {
+			break
+		}
+	}
+	return all
+}
+
+// firstOutsideIdx returns the index of the first fix outside wp's cylinder
+// at or after from. Returns len(fixes) if the pilot never leaves.
+func firstOutsideIdx(fixes []Fix, from int, wp Waypoint) int {
+	for i := from; i < len(fixes); i++ {
+		if haversine(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon) > wp.Radius {
+			return i
+		}
+	}
+	return len(fixes)
+}
+
+// isBetter reports whether candidate is a better result than current:
+// more waypoints completed wins; ties break on shorter total time.
+func isBetter(candidate, current []Split) bool {
+	if len(candidate) != len(current) {
+		return len(candidate) > len(current)
+	}
+	if len(candidate) == 0 {
+		return false
+	}
+	candidateDur := candidate[len(candidate)-1].Time.Sub(candidate[0].Time)
+	currentDur := current[len(current)-1].Time.Sub(current[0].Time)
+	return candidateDur < currentDur
 }
 
 // findAchievement dispatches to the correct detector based on waypoint type.
