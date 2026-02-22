@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-// debugCrossings adds small markers for the fix immediately before and after
-// each cylinder crossing, making it easy to inspect interpolation accuracy.
-// Flip to true locally when investigating scoring edge cases.
-const debugCrossings = true
-
 // jsLatLon is a lat/lon coordinate for JSON serialisation into Leaflet.
 type jsLatLon struct {
 	Lat float64 `json:"lat"`
@@ -48,7 +43,7 @@ type jsDebugPoint struct {
 //   - the flight track as a blue polyline
 //   - each task waypoint as a labelled circle
 //   - each achieved split as a marker with a popup
-func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split) error {
+func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split, debugCrossings bool) error {
 	f, err := os.Create(filename)
 	if err != nil {
 		return err

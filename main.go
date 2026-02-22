@@ -12,6 +12,7 @@ func main() {
 	waypointsFile := flag.String("waypoints", "", "OziExplorer waypoints file (.wpt)")
 	interpolate := flag.Bool("interpolate", false, "interpolate crossing times to the cylinder boundary (default: use first qualifying fix timestamp)")
 	htmlFile := flag.String("html", "", "write a Leaflet.js map visualization to this file")
+	debugCrossings := flag.Bool("debug-crossings", false, "overlay the fix before and after each cylinder crossing on the HTML map")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -126,7 +127,7 @@ func main() {
 		}
 
 		if *htmlFile != "" {
-			if err := WriteHTML(*htmlFile, flight, task, splits); err != nil {
+			if err := WriteHTML(*htmlFile, flight, task, splits, *debugCrossings); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
 				os.Exit(1)
 			}
