@@ -11,6 +11,7 @@ func main() {
 	taskFile := flag.String("task", "", "task definition file (e.g. inandout.txt)")
 	waypointsFile := flag.String("waypoints", "", "OziExplorer waypoints file (.wpt)")
 	interpolate := flag.Bool("interpolate", false, "interpolate crossing times to the cylinder boundary (default: use first qualifying fix timestamp)")
+	htmlFile := flag.String("html", "", "write a Leaflet.js map visualization to this file")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -118,8 +119,24 @@ func main() {
 			total := splits[len(splits)-1].Time.Sub(startTime)
 			fmt.Printf("  Task complete. Total time: %s\n", formatDuration(total))
 		}
+
+		if *htmlFile != "" {
+			if err := WriteHTML(*htmlFile, flight, task, splits); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\nWrote map to %s\n", *htmlFile)
+		}
 	} else {
 		fmt.Printf("\nNo task loaded.\n")
+
+		if *htmlFile != "" {
+			if err := WriteHTML(*htmlFile, flight, nil, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\nWrote map to %s\n", *htmlFile)
+		}
 	}
 }
 
