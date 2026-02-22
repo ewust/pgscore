@@ -137,7 +137,7 @@ func main() {
 		fmt.Printf("\nNo task loaded.\n")
 
 		if *htmlFile != "" {
-			if err := WriteHTML(*htmlFile, flight, nil, nil); err != nil {
+			if err := WriteHTML(*htmlFile, flight, nil, nil, false); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
 				os.Exit(1)
 			}
