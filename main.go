@@ -10,6 +10,7 @@ import (
 func main() {
 	taskFile := flag.String("task", "", "task definition file (e.g. inandout.txt)")
 	waypointsFile := flag.String("waypoints", "", "OziExplorer waypoints file (.wpt)")
+	interpolate := flag.Bool("interpolate", false, "interpolate crossing times to the cylinder boundary (default: use first qualifying fix timestamp)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -95,6 +96,27 @@ func main() {
 			}
 			fmt.Printf("  %d  lat=%9.5f  lon=%10.5f  r=%6gm  %-5s  %s\n",
 				i+1, wp.Lat, wp.Lon, wp.Radius, typeStr, wp.Name)
+		}
+
+		splits := ScoreFlight(flight.Fixes, task, *interpolate)
+		fmt.Printf("\n--- Splits (%d/%d waypoints achieved) ---\n", len(splits), len(task))
+		var startTime time.Time
+		for i, s := range splits {
+			if i == 0 {
+				startTime = s.Time
+				fmt.Printf("  %d  %-12s  %s  (start)\n",
+					i+1, s.Waypoint.Name, s.Time.Format("15:04:05 UTC"))
+			} else {
+				elapsed := s.Time.Sub(startTime)
+				leg := s.Time.Sub(splits[i-1].Time)
+				fmt.Printf("  %d  %-12s  %s  elapsed=%s  leg=%s\n",
+					i+1, s.Waypoint.Name, s.Time.Format("15:04:05 UTC"),
+					formatDuration(elapsed), formatDuration(leg))
+			}
+		}
+		if len(splits) == len(task) {
+			total := splits[len(splits)-1].Time.Sub(startTime)
+			fmt.Printf("  Task complete. Total time: %s\n", formatDuration(total))
 		}
 	} else {
 		fmt.Printf("\nNo task loaded.\n")
