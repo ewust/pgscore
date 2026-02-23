@@ -13,11 +13,22 @@ func main() {
 	interpolate := flag.Bool("interpolate", false, "interpolate crossing times to the cylinder boundary (default: use first qualifying fix timestamp)")
 	htmlFile := flag.String("html", "", "write a Leaflet.js map visualization to this file")
 	debugCrossings := flag.Bool("debug-crossings", false, "overlay the fix before and after each cylinder crossing on the HTML map")
+	earthModelFlag := flag.String("earth-model", "wgs84", "earth model for distance calculations: wgs84 (default) or fai (spherical)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	switch *earthModelFlag {
+	case "wgs84":
+		earthModel = WGS84Model{}
+	case "fai":
+		earthModel = FAIModel{}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown earth model %q: must be wgs84 or fai\n", *earthModelFlag)
+		os.Exit(1)
+	}
 
 	if flag.NArg() < 1 {
 		flag.Usage()

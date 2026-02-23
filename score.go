@@ -133,15 +133,15 @@ func tautString(task []Waypoint) (tlat, tlon []float64) {
 		tlat[i], tlon[i] = pointToward(wp.Lat, wp.Lon, dirLat, dirLon, wp.Radius)
 	}
 
-	// segCost returns the sum of geodesic distances from point i at (lat, lon)
-	// to its current adjacent touching points.
+	// segCost returns the sum of distances from point i at (lat, lon)
+	// to its current adjacent touching points, using the active earth model.
 	segCost := func(i int, lat, lon float64) float64 {
 		cost := 0.0
 		if i > 0 {
-			cost += geodesicDistance(tlat[i-1], tlon[i-1], lat, lon)
+			cost += earthModel.Distance(tlat[i-1], tlon[i-1], lat, lon)
 		}
 		if i < n-1 {
-			cost += geodesicDistance(lat, lon, tlat[i+1], tlon[i+1])
+			cost += earthModel.Distance(lat, lon, tlat[i+1], tlon[i+1])
 		}
 		return cost
 	}
@@ -156,13 +156,13 @@ func tautString(task []Waypoint) (tlat, tlon []float64) {
 
 		for i := 0; i < n; i++ {
 			angStep := arcStep / task[i].Radius
-			_, bearing := geodesicInverse(task[i].Lat, task[i].Lon, tlat[i], tlon[i])
+			_, bearing := earthModel.Inverse(task[i].Lat, task[i].Lon, tlat[i], tlon[i])
 			curCost := segCost(i, tlat[i], tlon[i])
 
-			cwLat, cwLon := geodesicDestination(task[i].Lat, task[i].Lon, bearing+angStep, task[i].Radius)
+			cwLat, cwLon := earthModel.Destination(task[i].Lat, task[i].Lon, bearing+angStep, task[i].Radius)
 			cwCost := segCost(i, cwLat, cwLon)
 
-			ccwLat, ccwLon := geodesicDestination(task[i].Lat, task[i].Lon, bearing-angStep, task[i].Radius)
+			ccwLat, ccwLon := earthModel.Destination(task[i].Lat, task[i].Lon, bearing-angStep, task[i].Radius)
 			ccwCost := segCost(i, ccwLat, ccwLon)
 
 			newLat, newLon, newCost := tlat[i], tlon[i], curCost
@@ -185,10 +185,10 @@ func tautString(task []Waypoint) (tlat, tlon []float64) {
 }
 
 // pointToward returns the point at distance dist (metres) from (fromLat, fromLon)
-// along the WGS84 geodesic toward (toLat, toLon).
+// toward (toLat, toLon) using the active earth model.
 func pointToward(fromLat, fromLon, toLat, toLon, dist float64) (lat, lon float64) {
-	_, az := geodesicInverse(fromLat, fromLon, toLat, toLon)
-	return geodesicDestination(fromLat, fromLon, az, dist)
+	_, az := earthModel.Inverse(fromLat, fromLon, toLat, toLon)
+	return earthModel.Destination(fromLat, fromLon, az, dist)
 }
 
 // optimizedTaskDistance returns the length of the shortest possible route
@@ -201,7 +201,7 @@ func optimizedTaskDistance(task []Waypoint) float64 {
 	tlat, tlon := tautString(task)
 	total := 0.0
 	for i := 0; i < n-1; i++ {
-		total += haversine(tlat[i], tlon[i], tlat[i+1], tlon[i+1])
+		total += earthModel.Distance(tlat[i], tlon[i], tlat[i+1], tlon[i+1])
 	}
 	return total
 }
@@ -228,7 +228,7 @@ func computeDistanceMade(fixes []Fix, task []Waypoint, splits []Split, totalDist
 	// Find the closest the pilot got to the next waypoint's center.
 	minDist := math.MaxFloat64
 	for i := searchFrom; i < len(fixes); i++ {
-		d := haversine(fixes[i].Lat, fixes[i].Lon, nextWP.Lat, nextWP.Lon)
+		d := earthModel.Distance(fixes[i].Lat, fixes[i].Lon, nextWP.Lat, nextWP.Lon)
 		if d < minDist {
 			minDist = d
 		}
@@ -291,7 +291,7 @@ func findAllCrossings(fixes []Fix, from int, wp Waypoint, interpolate bool) []Sp
 // at or after from. Returns len(fixes) if the pilot never leaves.
 func firstOutsideIdx(fixes []Fix, from int, wp Waypoint) int {
 	for i := from; i < len(fixes); i++ {
-		if haversine(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon) > wp.Radius {
+		if earthModel.Distance(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon) > wp.Radius {
 			return i
 		}
 	}
@@ -324,11 +324,11 @@ func findAchievement(fixes []Fix, from int, wp Waypoint, interpolate bool) (spli
 // With interpolate=true, the time is walked back to the boundary crossing.
 func findEntry(fixes []Fix, from int, wp Waypoint, interpolate bool) (Split, bool, int) {
 	for i := from; i < len(fixes); i++ {
-		d := haversine(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
+		d := earthModel.Distance(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
 		if d <= wp.Radius {
 			t := fixes[i].Timestamp
 			if interpolate && i > 0 {
-				dPrev := haversine(fixes[i-1].Lat, fixes[i-1].Lon, wp.Lat, wp.Lon)
+				dPrev := earthModel.Distance(fixes[i-1].Lat, fixes[i-1].Lon, wp.Lat, wp.Lon)
 				if dPrev > wp.Radius {
 					t = interpolateCrossing(fixes[i-1], fixes[i], dPrev, d, wp.Radius)
 				}
@@ -346,7 +346,7 @@ func findExit(fixes []Fix, from int, wp Waypoint, interpolate bool) (Split, bool
 	// Scan forward to find the first fix inside the cylinder.
 	insideFrom := -1
 	for i := from; i < len(fixes); i++ {
-		d := haversine(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
+		d := earthModel.Distance(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
 		if d <= wp.Radius {
 			insideFrom = i
 			break
@@ -358,11 +358,11 @@ func findExit(fixes []Fix, from int, wp Waypoint, interpolate bool) (Split, bool
 
 	// From the first inside fix, find the first fix outside (the exit).
 	for i := insideFrom + 1; i < len(fixes); i++ {
-		d := haversine(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
+		d := earthModel.Distance(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
 		if d > wp.Radius {
 			t := fixes[i].Timestamp
 			if interpolate {
-				dPrev := haversine(fixes[i-1].Lat, fixes[i-1].Lon, wp.Lat, wp.Lon)
+				dPrev := earthModel.Distance(fixes[i-1].Lat, fixes[i-1].Lon, wp.Lat, wp.Lon)
 				t = interpolateCrossing(fixes[i-1], fixes[i], dPrev, d, wp.Radius)
 			}
 			return Split{Waypoint: wp, Time: t, Index: i}, true, i
@@ -381,8 +381,3 @@ func interpolateCrossing(a, b Fix, dA, dB, radius float64) time.Time {
 	return a.Timestamp.Add(time.Duration(float64(dt) * frac))
 }
 
-// haversine returns the geodesic distance in metres between two lat/lon points
-// (decimal degrees) on the WGS84 ellipsoid.
-func haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	return geodesicDistance(lat1, lon1, lat2, lon2)
-}
