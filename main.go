@@ -98,6 +98,7 @@ func main() {
 			}
 			fmt.Printf("  %d  lat=%9.5f  lon=%10.5f  r=%6gm  %-5s  %s\n",
 				i+1, wp.Lat, wp.Lon, wp.Radius, typeStr, wp.Name)
+
 		}
 
 		result := ScoreFlight(flight.Fixes, task, *interpolate)
@@ -119,6 +120,8 @@ func main() {
 		}
 		if len(splits) > 0 {
 			fmt.Printf("  Speed time: %s\n", formatDuration(result.SpeedTime))
+			fmt.Printf("  Distance made: %.2f km / %.2f km (optimized)\n",
+				result.DistanceMade/1000, result.TotalOptimizedDistance/1000)
 			if result.TaskComplete {
 				fmt.Printf("  Task complete.\n")
 			} else {

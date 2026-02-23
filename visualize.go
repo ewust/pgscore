@@ -39,6 +39,20 @@ type jsDebugPoint struct {
 	Time  string  `json:"time"`
 }
 
+// optimizedRoute returns the sequence of optimal cylinder-touching points for
+// the task, delegating to the string-tautening algorithm in score.go.
+func optimizedRoute(task []Waypoint) []jsLatLon {
+	if len(task) < 2 {
+		return nil
+	}
+	tlat, tlon := tautString(task)
+	route := make([]jsLatLon, len(task))
+	for i := range task {
+		route[i] = jsLatLon{Lat: tlat[i], Lon: tlon[i]}
+	}
+	return route
+}
+
 // WriteHTML writes a Leaflet.js HTML map to filename showing:
 //   - the flight track as a blue polyline
 //   - each task waypoint as a labelled circle
@@ -143,13 +157,17 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split,
 	if err != nil {
 		return fmt.Errorf("marshalling debug points: %w", err)
 	}
+	routeJSON, err := json.Marshal(optimizedRoute(task))
+	if err != nil {
+		return fmt.Errorf("marshalling optimized route: %w", err)
+	}
 
 	title := flight.Date.Format("2006-01-02")
 	if flight.PilotName != "" {
 		title = flight.PilotName + " - " + title
 	}
 
-	_, err = fmt.Fprintf(f, leafletHTML, title, title, trackJSON, wpsJSON, splitsJSON, debugJSON)
+	_, err = fmt.Fprintf(f, leafletHTML, title, title, trackJSON, wpsJSON, splitsJSON, debugJSON, routeJSON)
 	return err
 }
 
@@ -187,10 +205,11 @@ const leafletHTML = `<!DOCTYPE html>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-var trackPoints  = %s;
-var waypoints    = %s;
-var splits       = %s;
-var debugPoints  = %s;
+var trackPoints    = %s;
+var waypoints      = %s;
+var splits         = %s;
+var debugPoints    = %s;
+var optimizedRoute = %s;
 
 
 var map = L.map('map')
@@ -213,6 +232,15 @@ if (trackPoints.length > 0) {
   L.circleMarker(latlngs[latlngs.length - 1], {
     radius: 5, color: '#c0392b', fillColor: '#c0392b', fillOpacity: 1, weight: 2
   }).bindTooltip('Track end').addTo(map);
+}
+
+// -- Optimized route (touching points through each cylinder boundary)
+if (optimizedRoute && optimizedRoute.length > 1) {
+  var routeLatlngs = optimizedRoute.map(function(p) { return [p.lat, p.lon]; });
+  L.polyline(routeLatlngs, {
+    //color: '#7f8c8d', weight: 1.5, opacity: 0.8, dashArray: '6 5'
+    color: '#00aa11', weight: 2, opacity: 0.8
+  }).bindTooltip('Optimized route').addTo(map);
 }
 
 // -- Task cylinders

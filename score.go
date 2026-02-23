@@ -17,9 +17,11 @@ type Split struct {
 type ScoreResult struct {
 	Splits    []Split       // one per achieved waypoint, in task order
 	SpeedTime time.Duration // elapsed time from the start to the ESS split;
-	//                             falls back to start->last split if the task has no ESS
+	//                           falls back to start->last split if the task has no ESS
 	TaskComplete bool // true if the GOAL waypoint was reached (or all waypoints
-	//                             were achieved when the task has no GOAL)
+	//                              were achieved when the task has no GOAL)
+	TotalOptimizedDistance float64 // meters: shortest possible route through all cylinders
+	DistanceMade           float64 // meters: optimized distance covered along the task
 }
 
 // ScoreFlight scores a flight against an ordered task.
@@ -53,11 +55,11 @@ func ScoreFlight(fixes []Fix, task []Waypoint, interpolate bool) ScoreResult {
 			best = attempt
 		}
 	}
-	return buildResult(best, task)
+	return buildResult(best, task, fixes)
 }
 
 // buildResult constructs a ScoreResult from the best split sequence and task.
-func buildResult(splits []Split, task []Waypoint) ScoreResult {
+func buildResult(splits []Split, task []Waypoint, fixes []Fix) ScoreResult {
 	if len(splits) == 0 {
 		return ScoreResult{}
 	}
@@ -93,11 +95,151 @@ func buildResult(splits []Split, task []Waypoint) ScoreResult {
 		taskComplete = true
 	}
 
+	totalDist := optimizedTaskDistance(task)
+	distMade := computeDistanceMade(fixes, task, splits, totalDist)
+
 	return ScoreResult{
-		Splits:       splits,
-		SpeedTime:    speedTime,
-		TaskComplete: taskComplete,
+		Splits:                 splits,
+		SpeedTime:              speedTime,
+		TaskComplete:           taskComplete,
+		TotalOptimizedDistance: totalDist,
+		DistanceMade:           distMade,
 	}
+}
+
+// tautString finds optimal cylinder-touching points using angular gradient
+// descent. Each touching point is parameterised by its bearing from the cylinder
+// centre; at every iteration each point takes a step clockwise or
+// counterclockwise (whichever reduces the sum of distances to its neighbours),
+// or stays put if neither direction helps. Iteration stops when the total
+// distance improvement across all points in one pass falls below threshold.
+func tautString(task []Waypoint) (tlat, tlon []float64) {
+	n := len(task)
+	if n < 2 {
+		return nil, nil
+	}
+	tlat = make([]float64, n)
+	tlon = make([]float64, n)
+
+	// Initialise each touching point on the cylinder boundary facing toward
+	// the next waypoint centre (or previous, for the last waypoint).
+	for i, wp := range task {
+		var dirLat, dirLon float64
+		if i < n-1 {
+			dirLat, dirLon = task[i+1].Lat, task[i+1].Lon
+		} else {
+			dirLat, dirLon = task[i-1].Lat, task[i-1].Lon
+		}
+		tlat[i], tlon[i] = pointToward(wp.Lat, wp.Lon, dirLat, dirLon, wp.Radius)
+	}
+
+	// segCost returns the sum of geodesic distances from point i at (lat, lon)
+	// to its current adjacent touching points.
+	segCost := func(i int, lat, lon float64) float64 {
+		cost := 0.0
+		if i > 0 {
+			cost += geodesicDistance(tlat[i-1], tlon[i-1], lat, lon)
+		}
+		if i < n-1 {
+			cost += geodesicDistance(lat, lon, tlat[i+1], tlon[i+1])
+		}
+		return cost
+	}
+
+	// arcStep is the fixed arc-length step on the cylinder boundary (metres).
+	// angStep for each cylinder = arcStep / radius, keeping physical step size
+	// constant regardless of cylinder size.
+	const arcStep = 0.5 // metres
+
+	for range 100_000 {
+		totalDistChange := 0.0
+
+		for i := 0; i < n; i++ {
+			angStep := arcStep / task[i].Radius
+			_, bearing := geodesicInverse(task[i].Lat, task[i].Lon, tlat[i], tlon[i])
+			curCost := segCost(i, tlat[i], tlon[i])
+
+			cwLat, cwLon := geodesicDestination(task[i].Lat, task[i].Lon, bearing+angStep, task[i].Radius)
+			cwCost := segCost(i, cwLat, cwLon)
+
+			ccwLat, ccwLon := geodesicDestination(task[i].Lat, task[i].Lon, bearing-angStep, task[i].Radius)
+			ccwCost := segCost(i, ccwLat, ccwLon)
+
+			newLat, newLon, newCost := tlat[i], tlon[i], curCost
+			if cwCost < newCost {
+				newLat, newLon, newCost = cwLat, cwLon, cwCost
+			}
+			if ccwCost < newCost {
+				newLat, newLon, newCost = ccwLat, ccwLon, ccwCost
+			}
+
+			totalDistChange += curCost - newCost
+			tlat[i], tlon[i] = newLat, newLon
+		}
+
+		if totalDistChange < 1e-6 {
+			break
+		}
+	}
+	return tlat, tlon
+}
+
+// pointToward returns the point at distance dist (metres) from (fromLat, fromLon)
+// along the WGS84 geodesic toward (toLat, toLon).
+func pointToward(fromLat, fromLon, toLat, toLon, dist float64) (lat, lon float64) {
+	_, az := geodesicInverse(fromLat, fromLon, toLat, toLon)
+	return geodesicDestination(fromLat, fromLon, az, dist)
+}
+
+// optimizedTaskDistance returns the length of the shortest possible route
+// through all task cylinders in order, using the string-tautening algorithm.
+func optimizedTaskDistance(task []Waypoint) float64 {
+	n := len(task)
+	if n < 2 {
+		return 0
+	}
+	tlat, tlon := tautString(task)
+	total := 0.0
+	for i := 0; i < n-1; i++ {
+		total += haversine(tlat[i], tlon[i], tlat[i+1], tlon[i+1])
+	}
+	return total
+}
+
+// computeDistanceMade returns how far along the optimized task route the pilot
+// got. For a complete task this equals totalDist. For an incomplete task it
+// scans fixes from the last achieved split forward to find the closest approach
+// to the next waypoint, then subtracts the remaining optimized distance.
+func computeDistanceMade(fixes []Fix, task []Waypoint, splits []Split, totalDist float64) float64 {
+	if len(splits) == len(task) {
+		return totalDist
+	}
+
+	// Start scanning from the fix where the last achieved waypoint was scored.
+	searchFrom := 0
+	if len(splits) > 0 {
+		searchFrom = splits[len(splits)-1].Index
+	}
+
+	// Index of the next (unachieved) waypoint.
+	nextIdx := len(splits)
+	nextWP := task[nextIdx]
+
+	// Find the closest the pilot got to the next waypoint's center.
+	minDist := math.MaxFloat64
+	for i := searchFrom; i < len(fixes); i++ {
+		d := haversine(fixes[i].Lat, fixes[i].Lon, nextWP.Lat, nextWP.Lon)
+		if d < minDist {
+			minDist = d
+		}
+	}
+
+	// Remaining distance = gap from closest point to next cylinder boundary
+	// + optimized distance through the rest of the task from that waypoint.
+	remaining := math.Max(0, minDist-nextWP.Radius)
+	remaining += optimizedTaskDistance(task[nextIdx:])
+
+	return math.Max(0, totalDist-remaining)
 }
 
 // scoreFrom greedily scores task[1:] starting from the given start split,
@@ -233,25 +375,14 @@ func findExit(fixes []Fix, from int, wp Waypoint, interpolate bool) (Split, bool
 // between fix a (distance dA from center) and fix b (distance dB from center).
 // Exactly one of dA, dB is inside the cylinder (< radius); the other is outside.
 func interpolateCrossing(a, b Fix, dA, dB, radius float64) time.Time {
-	// frac is the fractional position along a→b where distance equals radius.
+	// frac is the fractional position along a->b where distance equals radius.
 	frac := (radius - dA) / (dB - dA)
 	dt := b.Timestamp.Sub(a.Timestamp)
 	return a.Timestamp.Add(time.Duration(float64(dt) * frac))
 }
 
-// haversine returns the great-circle distance in meters between two points
-// given as (lat, lon) pairs in decimal degrees.
+// haversine returns the geodesic distance in metres between two lat/lon points
+// (decimal degrees) on the WGS84 ellipsoid.
 func haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusM = 6_371_000
-
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	deltaLat := (lat2 - lat1) * math.Pi / 180
-	deltaLon := (lon2 - lon1) * math.Pi / 180
-
-	sinDLat := math.Sin(deltaLat / 2)
-	sinDLon := math.Sin(deltaLon / 2)
-	a := sinDLat*sinDLat + math.Cos(lat1Rad)*math.Cos(lat2Rad)*sinDLon*sinDLon
-
-	return earthRadiusM * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return geodesicDistance(lat1, lon1, lat2, lon2)
 }
