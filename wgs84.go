@@ -150,3 +150,22 @@ func closestOnGeodesic(aLat, aLon, bLat, bLon, cLat, cLon float64) (lat, lon flo
 	}
 	return geodesicDestination(aLat, aLon, az, (lo+hi)/2)
 }
+
+// WGS84Model implements EarthModel using Vincenty's formulae on the WGS84 ellipsoid.
+type WGS84Model struct{}
+
+func (WGS84Model) Distance(lat1, lon1, lat2, lon2 float64) float64 {
+	return geodesicDistance(lat1, lon1, lat2, lon2)
+}
+
+func (WGS84Model) Inverse(lat1, lon1, lat2, lon2 float64) (float64, float64) {
+	return geodesicInverse(lat1, lon1, lat2, lon2)
+}
+
+func (WGS84Model) Destination(lat, lon, azimuth, dist float64) (float64, float64) {
+	return geodesicDestination(lat, lon, azimuth, dist)
+}
+
+func (WGS84Model) ClosestOnPath(aLat, aLon, bLat, bLon, cLat, cLon float64) (float64, float64) {
+	return closestOnGeodesic(aLat, aLon, bLat, bLon, cLat, cLon)
+}
