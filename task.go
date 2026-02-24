@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -106,7 +107,7 @@ func ParseTaskFile(filename string, waypoints map[string]Waypoint) ([]Waypoint, 
 			return nil, fmt.Errorf("line %d: waypoint %q not found in waypoints file", lineNum, name)
 		}
 
-		// Parse radius: "800M" → 800.0
+		// Parse radius: "800M" -> 800.0
 		radiusStr := strings.TrimRight(strings.ToUpper(fields[1]), "M")
 		radius, err := strconv.ParseFloat(radiusStr, 64)
 		if err != nil {
@@ -136,4 +137,73 @@ func ParseTaskFile(filename string, waypoints map[string]Waypoint) ([]Waypoint, 
 	}
 
 	return task, scanner.Err()
+}
+
+// xctskFile mirrors the JSON structure of an XCTrack task file (.xctsk).
+type xctskFile struct {
+	SSS struct {
+		Direction string `json:"direction"` // "EXIT" or "ENTER"
+	} `json:"sss"`
+	Turnpoints []struct {
+		Radius   float64 `json:"radius"`
+		Waypoint struct {
+			Name string  `json:"name"`
+			Lat  float64 `json:"lat"`
+			Lon  float64 `json:"lon"`
+		} `json:"waypoint"`
+		Type string `json:"type"` // "SSS", "ESS", or "" for normal/goal
+	} `json:"turnpoints"`
+}
+
+// ParseXCTaskFile reads an XCTrack task file (.xctsk) and returns an ordered
+// list of Waypoints. Coordinates are embedded in the file so no external
+// waypoints database is required.
+//
+// Type mapping:
+//
+//	"SSS": WPTypeExit  (start: pilot must exit the cylinder)
+//	"ESS": WPTypeESS
+//	""   : WPTypeGoal on the last turnpoint, WPTypeNormal otherwise
+func ParseXCTaskFile(filename string) ([]Waypoint, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var f xctskFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("parsing xctsk JSON: %w", err)
+	}
+
+	sssIsExit := f.SSS.Direction == "EXIT"
+
+	task := make([]Waypoint, 0, len(f.Turnpoints))
+	for i, tp := range f.Turnpoints {
+		var wpType WaypointType
+		switch tp.Type {
+		case "SSS":
+			if sssIsExit {
+				wpType = WPTypeExit
+			} else {
+				wpType = WPTypeNormal
+			}
+		case "ESS":
+			wpType = WPTypeESS
+		case "":
+			if i == len(f.Turnpoints)-1 {
+				wpType = WPTypeGoal
+			} else {
+				wpType = WPTypeNormal
+			}
+		}
+		task = append(task, Waypoint{
+			Lat:    tp.Waypoint.Lat,
+			Lon:    tp.Waypoint.Lon,
+			Name:   tp.Waypoint.Name,
+			Radius: tp.Radius,
+			Type:   wpType,
+		})
+	}
+
+	return task, nil
 }

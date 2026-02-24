@@ -9,6 +9,7 @@ import (
 
 func main() {
 	taskFile := flag.String("task", "", "task definition file (e.g. inandout.txt)")
+	xctaskFile := flag.String("xctask", "", "XCTrack task file (.xctsk JSON)")
 	waypointsFile := flag.String("waypoints", "", "OziExplorer waypoints file (.wpt)")
 	interpolate := flag.Bool("interpolate", false, "interpolate crossing times to the cylinder boundary (default: use first qualifying fix timestamp)")
 	htmlFile := flag.String("html", "", "write a Leaflet.js map visualization to this file")
@@ -56,6 +57,10 @@ func main() {
 
 	// Optionally load an external task file (requires waypoints database).
 	var externalTask []Waypoint
+	if *taskFile != "" && *xctaskFile != "" {
+		fmt.Fprintf(os.Stderr, "Error: --task and --xctask are mutually exclusive\n")
+		os.Exit(1)
+	}
 	if *taskFile != "" {
 		if wpDB == nil {
 			fmt.Fprintf(os.Stderr, "Error: --task requires --waypoints\n")
@@ -64,6 +69,13 @@ func main() {
 		externalTask, err = ParseTaskFile(*taskFile, wpDB)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error parsing task file: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if *xctaskFile != "" {
+		externalTask, err = ParseXCTaskFile(*xctaskFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing xctask file: %v\n", err)
 			os.Exit(1)
 		}
 	}
@@ -97,7 +109,12 @@ func main() {
 	taskSource := "IGC declared"
 	if externalTask != nil {
 		task = externalTask
-		taskSource = *taskFile
+		switch {
+		case *xctaskFile != "":
+			taskSource = *xctaskFile
+		default:
+			taskSource = *taskFile
+		}
 	}
 
 	if len(task) > 0 {
