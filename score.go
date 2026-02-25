@@ -10,7 +10,8 @@ type Split struct {
 	Waypoint Waypoint  // the waypoint that was achieved
 	Time     time.Time // time of achievement: the triggering fix's timestamp, or
 	//                    interpolated to the boundary if ScoreFlight was called with interpolate=true
-	Index int // index of the fix in the fixes array at/just after achievement
+	Index    int     // index of the fix in the fixes array at/just after achievement
+	Distance float64 // meters from the previous split's crossing point; 0 for the first split
 }
 
 // ScoreResult holds the outcome of scoring a flight against a task.
@@ -20,8 +21,9 @@ type ScoreResult struct {
 	//                           falls back to start->last split if the task has no ESS
 	TaskComplete bool // true if the GOAL waypoint was reached (or all waypoints
 	//                              were achieved when the task has no GOAL)
-	TotalOptimizedDistance float64 // meters: shortest possible route through all cylinders
-	DistanceMade           float64 // meters: optimized distance covered along the task
+	TotalOptimizedDistance        float64 // meters: shortest possible route through all cylinders
+	SpeedSectionOptimizedDistance float64 // meters: optimized distance from SSS to ESS (0 if no ESS)
+	DistanceMade                  float64 // meters: optimized distance covered along the task
 }
 
 // ScoreFlight scores a flight against an ordered task.
@@ -95,15 +97,22 @@ func buildResult(splits []Split, task []Waypoint, fixes []Fix) ScoreResult {
 		taskComplete = true
 	}
 
-	totalDist := optimizedTaskDistance(task)
+	for i := 1; i < len(splits); i++ {
+		prev := fixes[splits[i-1].Index]
+		cur := fixes[splits[i].Index]
+		splits[i].Distance = earthModel.Distance(prev.Lat, prev.Lon, cur.Lat, cur.Lon)
+	}
+
+	totalDist, speedDist := optimizedTaskDistance(task)
 	distMade := computeDistanceMade(fixes, task, splits, totalDist)
 
 	return ScoreResult{
-		Splits:                 splits,
-		SpeedTime:              speedTime,
-		TaskComplete:           taskComplete,
-		TotalOptimizedDistance: totalDist,
-		DistanceMade:           distMade,
+		Splits:                        splits,
+		SpeedTime:                     speedTime,
+		TaskComplete:                  taskComplete,
+		TotalOptimizedDistance:        totalDist,
+		SpeedSectionOptimizedDistance: speedDist,
+		DistanceMade:                  distMade,
 	}
 }
 
@@ -193,17 +202,30 @@ func pointToward(fromLat, fromLon, toLat, toLon, dist float64) (lat, lon float64
 
 // optimizedTaskDistance returns the length of the shortest possible route
 // through all task cylinders in order, using the string-tautening algorithm.
-func optimizedTaskDistance(task []Waypoint) float64 {
+// It also returns the speed-section distance (SSS→ESS); if the task has no
+// ESS waypoint, speedSection is 0.
+func optimizedTaskDistance(task []Waypoint) (total float64, speedSection float64) {
 	n := len(task)
 	if n < 2 {
-		return 0
+		return 0, 0
 	}
 	tlat, tlon := tautString(task)
-	total := 0.0
-	for i := 0; i < n-1; i++ {
-		total += earthModel.Distance(tlat[i], tlon[i], tlat[i+1], tlon[i+1])
+
+	essIdx := -1
+	for i, wp := range task {
+		if wp.Type == WPTypeESS {
+			essIdx = i
+		}
 	}
-	return total
+
+	for i := 0; i < n-1; i++ {
+		d := earthModel.Distance(tlat[i], tlon[i], tlat[i+1], tlon[i+1])
+		total += d
+		if essIdx >= 0 && i < essIdx {
+			speedSection += d
+		}
+	}
+	return total, speedSection
 }
 
 // computeDistanceMade returns how far along the optimized task route the pilot
@@ -237,7 +259,8 @@ func computeDistanceMade(fixes []Fix, task []Waypoint, splits []Split, totalDist
 	// Remaining distance = gap from closest point to next cylinder boundary
 	// + optimized distance through the rest of the task from that waypoint.
 	remaining := math.Max(0, minDist-nextWP.Radius)
-	remaining += optimizedTaskDistance(task[nextIdx:])
+	subTotal, _ := optimizedTaskDistance(task[nextIdx:])
+	remaining += subTotal
 
 	return math.Max(0, totalDist-remaining)
 }
@@ -380,4 +403,3 @@ func interpolateCrossing(a, b Fix, dA, dB, radius float64) time.Time {
 	dt := b.Timestamp.Sub(a.Timestamp)
 	return a.Timestamp.Add(time.Duration(float64(dt) * frac))
 }
-

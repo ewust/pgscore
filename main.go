@@ -144,6 +144,14 @@ func main() {
 					i+1, wp.Lat, wp.Lon, wp.Radius, typeStr, wp.Name)
 			}
 
+			if *debugCrossings {
+				startCrossings := findAllCrossings(flight.Fixes, 0, task[0], *interpolate)
+				fmt.Printf("\n--- Start crossings (%d) ---\n", len(startCrossings))
+				for _, start := range startCrossings {
+					fmt.Printf("  start crossing: %v\n", start)
+				}
+			}
+
 			fmt.Printf("\n--- Splits (%d/%d waypoints achieved) ---\n", len(splits), len(task))
 			for i, s := range splits {
 				if i == 0 {
@@ -152,15 +160,25 @@ func main() {
 				} else {
 					elapsed := s.Time.Sub(startTime)
 					leg := s.Time.Sub(splits[i-1].Time)
-					fmt.Printf("  %d  %-12s  %s  elapsed=%s  leg=%s\n",
+					speed := splitSpeed(s.Distance, leg)
+					fmt.Printf("  %d  %-12s  %s  elapsed=%s  leg=%s  dist=%dm  speed=%.1fkm/h\n",
 						i+1, s.Waypoint.Name, s.Time.Format("15:04:05 UTC"),
-						formatDuration(elapsed), formatDuration(leg))
+						formatDuration(elapsed), formatDuration(leg), int(s.Distance), speed)
 				}
 			}
 			if len(splits) > 0 {
 				fmt.Printf("  Speed time: %s\n", formatDuration(result.SpeedTime))
 				fmt.Printf("  Distance made: %.2f km / %.2f km (optimized)\n",
 					result.DistanceMade/1000, result.TotalOptimizedDistance/1000)
+				ssd := speedSectionDistance(splits)
+				if ssd > 0 {
+					fmt.Printf("  Speed section distance: %.2f km\n", float64(ssd)/1000)
+					fmt.Printf("  Speed section speed: %.2f km/h\n", splitSpeed(float64(ssd), result.SpeedTime))
+				}
+				if result.SpeedSectionOptimizedDistance > 0 {
+					fmt.Printf("  Speed section optimized distance: %.2f km\n",
+						result.SpeedSectionOptimizedDistance/1000)
+				}
 				if result.TaskComplete {
 					fmt.Printf("  Task complete.\n")
 				} else {
@@ -190,33 +208,64 @@ func main() {
 }
 
 type splitJSON struct {
-	Name    string `json:"name"`
-	Time    string `json:"time"`
-	Elapsed string `json:"elapsed"`
-	Leg     string `json:"leg,omitempty"`
+	Name     string  `json:"name"`
+	Time     string  `json:"time"`
+	Elapsed  string  `json:"elapsed"`
+	Leg      string  `json:"leg,omitempty"`
+	Distance int     `json:"distance,omitempty"`
+	Speed    float64 `json:"speed_kmh,omitempty"`
 }
 
 type outputJSON struct {
-	Pilot                 string      `json:"pilot,omitempty"`
-	Date                  string      `json:"date"`
-	Glider                string      `json:"glider,omitempty"`
-	Task                  string      `json:"task,omitempty"`
-	Splits                []splitJSON `json:"splits"`
-	SpeedTime             string      `json:"speed_time,omitempty"`
-	DistanceMade          int         `json:"distance_made"`
-	OptimizedTaskDistance int         `json:"optimized_task_distance"`
-	Complete              bool        `json:"complete"`
+	Pilot                         string      `json:"pilot,omitempty"`
+	Date                          string      `json:"date"`
+	Glider                        string      `json:"glider,omitempty"`
+	Task                          string      `json:"task,omitempty"`
+	Splits                        []splitJSON `json:"splits"`
+	SpeedTime                     string      `json:"speed_time,omitempty"`
+	DistanceMade                  int         `json:"distance_made"`
+	OptimizedTaskDistance         int         `json:"optimized_task_distance"`
+	SpeedSectionDistance          int         `json:"speed_section_distance,omitempty"`
+	SpeedSectionOptimizedDistance int         `json:"speed_section_optimized_distance,omitempty"`
+	SpeedSectionSpeedKmh          float64     `json:"speed_section_speed_kmh,omitempty"`
+	Complete                      bool        `json:"complete"`
+}
+
+// splitSpeed returns the average speed in km/h over a split leg, or 0 if
+// distance is 0 or the leg duration is non-positive.
+func splitSpeed(dist float64, leg time.Duration) float64 {
+	if dist <= 0 || leg <= 0 {
+		return 0
+	}
+	return (dist / 1000.0) / leg.Hours()
+}
+
+// speedSectionDistance returns the sum of Split.Distance values up to and
+// including the ESS waypoint. Returns the full distance if no ESS.
+func speedSectionDistance(splits []Split) int {
+	var total float64
+	for _, s := range splits {
+		total += s.Distance
+		if s.Waypoint.Type == WPTypeESS {
+			return int(total)
+		}
+	}
+	return int(total)
 }
 
 func writeJSON(flight *Flight, taskName string, result ScoreResult, splits []Split, startTime time.Time) {
+	ssd := speedSectionDistance(splits)
 	out := outputJSON{
-		Pilot:                 flight.PilotName,
-		Date:                  flight.Date.Format("2006-01-02"),
-		Glider:                flight.GliderType,
-		Task:                  taskName,
-		DistanceMade:          int(result.DistanceMade),
-		OptimizedTaskDistance: int(result.TotalOptimizedDistance),
-		Complete:              result.TaskComplete,
+		Pilot:                         flight.PilotName,
+		Date:                          flight.Date.Format("2006-01-02"),
+		Glider:                        flight.GliderType,
+		Task:                          taskName,
+		DistanceMade:                  int(result.DistanceMade),
+		OptimizedTaskDistance:         int(result.TotalOptimizedDistance),
+		SpeedSectionDistance:          ssd,
+		SpeedSectionOptimizedDistance: int(result.SpeedSectionOptimizedDistance),
+		SpeedSectionSpeedKmh:          splitSpeed(float64(ssd), result.SpeedTime),
+		Complete:                      result.TaskComplete,
 	}
 	if result.SpeedTime > 0 {
 		out.SpeedTime = formatDuration(result.SpeedTime)
@@ -228,7 +277,10 @@ func writeJSON(flight *Flight, taskName string, result ScoreResult, splits []Spl
 			Elapsed: formatDuration(s.Time.Sub(startTime)),
 		}
 		if i > 0 {
-			sj.Leg = formatDuration(s.Time.Sub(splits[i-1].Time))
+			leg := s.Time.Sub(splits[i-1].Time)
+			sj.Leg = formatDuration(leg)
+			sj.Distance = int(s.Distance)
+			sj.Speed = splitSpeed(s.Distance, leg)
 		}
 		out.Splits = append(out.Splits, sj)
 	}
