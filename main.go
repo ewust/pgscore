@@ -109,7 +109,7 @@ func main() {
 			if externalTask != nil {
 				taskName = taskSource
 			}
-			writeJSON(flight, taskName, result, splits, startTime)
+			writeJSON(flight, taskName, task, result, splits, startTime)
 		} else {
 			// Print flight summary.
 			fmt.Printf("\n=== IGC Flight Summary ===\n")
@@ -184,6 +184,11 @@ func main() {
 				} else {
 					fmt.Printf("  Task not complete.\n")
 				}
+			} else {
+				// Print optimized distance for this task
+				total, ssd := optimizedTaskDistance(task)
+				fmt.Printf("  Optimized distance: %.2f km\n", total/1000)
+				fmt.Printf("  Speed section optimized distance: %.2f km\n", ssd/1000)
 			}
 
 			if *htmlFile != "" {
@@ -253,17 +258,24 @@ func speedSectionDistance(splits []Split) int {
 	return int(total)
 }
 
-func writeJSON(flight *Flight, taskName string, result ScoreResult, splits []Split, startTime time.Time) {
+func writeJSON(flight *Flight, taskName string, task []Waypoint, result ScoreResult, splits []Split, startTime time.Time) {
 	ssd := speedSectionDistance(splits)
+	ssdOptimized := result.SpeedSectionOptimizedDistance
+	dOptimized := result.TotalOptimizedDistance
+	if len(splits) == 0 {
+		// No input file given, just process task file
+		dOptimized, ssdOptimized = optimizedTaskDistance(task)
+	}
+
 	out := outputJSON{
 		Pilot:                         flight.PilotName,
 		Date:                          flight.Date.Format("2006-01-02"),
 		Glider:                        flight.GliderType,
 		Task:                          taskName,
 		DistanceMade:                  int(result.DistanceMade),
-		OptimizedTaskDistance:         int(result.TotalOptimizedDistance),
+		OptimizedTaskDistance:         int(dOptimized),
 		SpeedSectionDistance:          ssd,
-		SpeedSectionOptimizedDistance: int(result.SpeedSectionOptimizedDistance),
+		SpeedSectionOptimizedDistance: int(ssdOptimized),
 		SpeedSectionSpeedKmh:          splitSpeed(float64(ssd), result.SpeedTime),
 		Complete:                      result.TaskComplete,
 	}
