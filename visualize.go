@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -51,6 +52,72 @@ func optimizedRoute(task []Waypoint) []jsLatLon {
 		route[i] = jsLatLon{Lat: tlat[i], Lon: tlon[i]}
 	}
 	return route
+}
+
+type jsVizOutput struct {
+	TrackPoints    []jsLatLon    `json:"trackPoints"`
+	Waypoints      []jsWaypoint  `json:"waypoints"`
+	Splits         []jsSplit     `json:"splits"`
+	OptimizedRoute []jsLatLon    `json:"optimizedRoute"`
+}
+
+// WriteVisualizationJSON writes a JSON object to w containing the flight track
+// points, task waypoints, splits, and optimized route — the same data embedded
+// in the HTML template, but as a standalone JSON object.
+func WriteVisualizationJSON(w io.Writer, flight *Flight, task []Waypoint, splits []Split) error {
+	track := make([]jsLatLon, 0, len(flight.Fixes))
+	for _, fix := range flight.Fixes {
+		if fix.Valid {
+			track = append(track, jsLatLon{fix.Lat, fix.Lon})
+		}
+	}
+
+	wps := make([]jsWaypoint, 0, len(task))
+	for _, wp := range task {
+		wps = append(wps, jsWaypoint{
+			Lat:    wp.Lat,
+			Lon:    wp.Lon,
+			Name:   wp.Name,
+			Radius: wp.Radius,
+			Type:   wp.Type.String(),
+		})
+	}
+
+	var startTime time.Time
+	jsSplits := make([]jsSplit, 0, len(splits))
+	for i, s := range splits {
+		if i == 0 {
+			startTime = s.Time
+		}
+		var elapsed, leg string
+		if i > 0 {
+			elapsed = formatDuration(s.Time.Sub(startTime))
+			leg = formatDuration(s.Time.Sub(splits[i-1].Time))
+		}
+		pos := jsLatLon{s.Waypoint.Lat, s.Waypoint.Lon}
+		if s.Index < len(flight.Fixes) {
+			pos = jsLatLon{flight.Fixes[s.Index].Lat, flight.Fixes[s.Index].Lon}
+		}
+		jsSplits = append(jsSplits, jsSplit{
+			Lat:     pos.Lat,
+			Lon:     pos.Lon,
+			Name:    s.Waypoint.Name,
+			Time:    s.Time.Format("15:04:05 UTC"),
+			Elapsed: elapsed,
+			Leg:     leg,
+		})
+	}
+
+	out := jsVizOutput{
+		TrackPoints:    track,
+		Waypoints:      wps,
+		Splits:         jsSplits,
+		OptimizedRoute: optimizedRoute(task),
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // WriteHTML writes a Leaflet.js HTML map to filename showing:

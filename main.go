@@ -17,6 +17,7 @@ func main() {
 	debugCrossings := flag.Bool("debug-crossings", false, "overlay the fix before and after each cylinder crossing on the HTML map")
 	earthModelFlag := flag.String("earth-model", "wgs84", "earth model for distance calculations: wgs84 (default) or fai (spherical)")
 	jsonOut := flag.Bool("json", false, "output results as JSON")
+	vizJSON := flag.Bool("viz-json", false, "output visualization JSON (track, waypoints, splits, optimized route) to stdout")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -104,7 +105,12 @@ func main() {
 			startTime = splits[0].Time
 		}
 
-		if *jsonOut {
+		if *vizJSON {
+			if err := WriteVisualizationJSON(os.Stdout, flight, task, splits); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing viz JSON: %v\n", err)
+				os.Exit(1)
+			}
+		} else if *jsonOut {
 			taskName := ""
 			if externalTask != nil {
 				taskName = taskSource
