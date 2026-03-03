@@ -220,6 +220,7 @@ func main() {
 
 type splitJSON struct {
 	Name     string  `json:"name"`
+	Type     string  `json:"type"`
 	Time     string  `json:"time"`
 	Elapsed  string  `json:"elapsed"`
 	Leg      string  `json:"leg,omitempty"`
@@ -291,6 +292,7 @@ func writeJSON(flight *Flight, taskName string, task []Waypoint, result ScoreRes
 	for i, s := range splits {
 		sj := splitJSON{
 			Name:    s.Waypoint.Name,
+			Type:    s.Waypoint.Type.String(),
 			Time:    s.Time.Format("15:04:05"),
 			Elapsed: formatDuration(s.Time.Sub(startTime)),
 		}
