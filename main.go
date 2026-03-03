@@ -233,6 +233,12 @@ func main() {
 	}
 }
 
+type waypointJSON struct {
+	Name               string `json:"name"`
+	Type               string `json:"type,omitempty"`
+	CumulativeDistance int    `json:"cumulative_distance_m"`
+}
+
 type splitJSON struct {
 	Name     string  `json:"name"`
 	Type     string  `json:"type"`
@@ -244,18 +250,19 @@ type splitJSON struct {
 }
 
 type outputJSON struct {
-	Pilot                         string      `json:"pilot,omitempty"`
-	Date                          string      `json:"date"`
-	Glider                        string      `json:"glider,omitempty"`
-	Task                          string      `json:"task,omitempty"`
-	Splits                        []splitJSON `json:"splits"`
-	SpeedTime                     string      `json:"speed_time,omitempty"`
-	DistanceMade                  int         `json:"distance_made"`
-	OptimizedTaskDistance         int         `json:"optimized_task_distance"`
-	SpeedSectionDistance          int         `json:"speed_section_distance,omitempty"`
-	SpeedSectionOptimizedDistance int         `json:"speed_section_optimized_distance,omitempty"`
-	SpeedSectionSpeedKmh          float64     `json:"speed_section_speed_kmh,omitempty"`
-	Complete                      bool        `json:"complete"`
+	Pilot                         string         `json:"pilot,omitempty"`
+	Date                          string         `json:"date"`
+	Glider                        string         `json:"glider,omitempty"`
+	Task                          string         `json:"task,omitempty"`
+	Waypoints                     []waypointJSON `json:"waypoints,omitempty"`
+	Splits                        []splitJSON    `json:"splits"`
+	SpeedTime                     string         `json:"speed_time,omitempty"`
+	DistanceMade                  int            `json:"distance_made"`
+	OptimizedTaskDistance         int            `json:"optimized_task_distance"`
+	SpeedSectionDistance          int            `json:"speed_section_distance,omitempty"`
+	SpeedSectionOptimizedDistance int            `json:"speed_section_optimized_distance,omitempty"`
+	SpeedSectionSpeedKmh          float64        `json:"speed_section_speed_kmh,omitempty"`
+	Complete                      bool           `json:"complete"`
 }
 
 // splitSpeed returns the average speed in km/h over a split leg, or 0 if
@@ -300,6 +307,14 @@ func writeJSON(flight *Flight, taskName string, task []Waypoint, result ScoreRes
 		SpeedSectionOptimizedDistance: int(ssdOptimized),
 		SpeedSectionSpeedKmh:          splitSpeed(float64(ssd), result.SpeedTime),
 		Complete:                      result.TaskComplete,
+	}
+	cDists := waypointCumulativeDistances(task)
+	for i, wp := range task {
+		out.Waypoints = append(out.Waypoints, waypointJSON{
+			Name:               wp.Name,
+			Type:               wp.Type.String(),
+			CumulativeDistance: int(cDists[i]),
+		})
 	}
 	if result.SpeedTime > 0 {
 		out.SpeedTime = formatDuration(result.SpeedTime)

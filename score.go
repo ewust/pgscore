@@ -228,6 +228,22 @@ func optimizedTaskDistance(task []Waypoint) (total float64, speedSection float64
 	return total, speedSection
 }
 
+// waypointCumulativeDistances returns, for each waypoint, the cumulative
+// optimized distance from the start of the task to that waypoint's optimal
+// touching point. The first entry is always 0.
+func waypointCumulativeDistances(task []Waypoint) []float64 {
+	n := len(task)
+	result := make([]float64, n)
+	if n < 2 {
+		return result
+	}
+	tlat, tlon := tautString(task)
+	for i := 1; i < n; i++ {
+		result[i] = result[i-1] + earthModel.Distance(tlat[i-1], tlon[i-1], tlat[i], tlon[i])
+	}
+	return result
+}
+
 // computeDistanceMade returns how far along the optimized task route the pilot
 // got. For a complete task this equals totalDist. For an incomplete task it
 // scans fixes from the last achieved split forward to find the closest approach
