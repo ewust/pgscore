@@ -55,20 +55,20 @@ func optimizedRoute(task []Waypoint) []jsLatLon {
 }
 
 type jsVizOutput struct {
-	TrackPoints    []jsLatLon    `json:"trackPoints"`
-	Waypoints      []jsWaypoint  `json:"waypoints"`
-	Splits         []jsSplit     `json:"splits"`
-	OptimizedRoute []jsLatLon    `json:"optimizedRoute"`
+	TrackPoints    [][2]float64 `json:"trackPoints"`
+	Waypoints      []jsWaypoint `json:"waypoints"`
+	Splits         []jsSplit    `json:"splits"`
+	OptimizedRoute []jsLatLon   `json:"optimizedRoute"`
 }
 
 // WriteVisualizationJSON writes a JSON object to w containing the flight track
 // points, task waypoints, splits, and optimized route — the same data embedded
 // in the HTML template, but as a standalone JSON object.
 func WriteVisualizationJSON(w io.Writer, flight *Flight, task []Waypoint, splits []Split) error {
-	track := make([]jsLatLon, 0, len(flight.Fixes))
+	track := make([][2]float64, 0, len(flight.Fixes))
 	for _, fix := range flight.Fixes {
 		if fix.Valid {
-			track = append(track, jsLatLon{fix.Lat, fix.Lon})
+			track = append(track, [2]float64{fix.Lat, fix.Lon})
 		}
 	}
 
@@ -116,7 +116,7 @@ func WriteVisualizationJSON(w io.Writer, flight *Flight, task []Waypoint, splits
 	}
 
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	//enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
