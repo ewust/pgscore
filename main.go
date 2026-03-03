@@ -18,6 +18,7 @@ func main() {
 	earthModelFlag := flag.String("earth-model", "wgs84", "earth model for distance calculations: wgs84 (default) or fai (spherical)")
 	jsonOut := flag.Bool("json", false, "output results as JSON")
 	vizJSON := flag.Bool("viz-json", false, "output visualization JSON (track, waypoints, splits, optimized route) to stdout")
+	progressOut := flag.Bool("progress", false, "output a JSON array of [unixTimestamp, distanceMeters] progress tuples to stdout")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -105,7 +106,21 @@ func main() {
 			startTime = splits[0].Time
 		}
 
-		if *vizJSON {
+		if *progressOut {
+			var out [][2]float64
+			if len(splits) == 0 {
+				out = [][2]float64{{0, 0}}
+			} else {
+				pts := computeProgress(flight.Fixes, task, splits, result.TotalOptimizedDistance)
+				startTime := splits[0].Time
+				out = make([][2]float64, len(pts))
+				for i, p := range pts {
+					out[i] = [2]float64{p.Time.Sub(startTime).Seconds(), p.Progress}
+				}
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.Encode(out)
+		} else if *vizJSON {
 			if err := WriteVisualizationJSON(os.Stdout, flight, task, splits); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing viz JSON: %v\n", err)
 				os.Exit(1)

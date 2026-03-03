@@ -265,6 +265,74 @@ func computeDistanceMade(fixes []Fix, task []Waypoint, splits []Split, totalDist
 	return math.Max(0, totalDist-remaining)
 }
 
+// ProgressPoint records the distance along the optimized task route achieved
+// at a given point in time.
+type ProgressPoint struct {
+	Time     time.Time
+	Progress float64 // metres along the optimized task route
+}
+
+// computeProgress returns a ProgressPoint for every valid fix at or after the
+// start split, recording how far along the optimized task route the pilot has
+// progressed at that moment. Returns nil if there are no splits (no valid start).
+// Progress is monotonically non-decreasing: it reflects the closest approach
+// to the goal achieved so far, mirroring the logic in computeDistanceMade.
+func computeProgress(fixes []Fix, task []Waypoint, splits []Split, totalDist float64) []ProgressPoint {
+	if len(fixes) == 0 || len(task) == 0 || len(splits) == 0 {
+		return nil
+	}
+
+	// Precompute suffix optimized distances: suffixDist[i] is the optimized
+	// route length from task[i] to the end of the task.
+	suffixDist := make([]float64, len(task))
+	for i := range task {
+		if len(task)-i >= 2 {
+			suffixDist[i], _ = optimizedTaskDistance(task[i:])
+		}
+	}
+
+	startIdx := splits[0].Index
+	result := make([]ProgressPoint, 0, len(fixes)-startIdx)
+	var maxProgress float64
+	// The start split (splits[0]) is already achieved; begin scanning from its fix.
+	nAchieved := 1
+
+	for i, fix := range fixes[startIdx:] {
+		if !fix.Valid {
+			continue
+		}
+
+		// Advance nAchieved past splits whose scoring fix is at or before this fix.
+		// Adjust i back to the original fixes index for comparison.
+		absIdx := startIdx + i
+		for nAchieved < len(splits) && splits[nAchieved].Index <= absIdx {
+			nAchieved++
+		}
+
+		var progress float64
+		if nAchieved == len(task) {
+			progress = totalDist
+		} else {
+			nextWP := task[nAchieved]
+			d := earthModel.Distance(fix.Lat, fix.Lon, nextWP.Lat, nextWP.Lon)
+			remaining := math.Max(0, d-nextWP.Radius) + suffixDist[nAchieved]
+			progress = math.Max(0, totalDist-remaining)
+		}
+
+		if progress > maxProgress {
+			maxProgress = progress
+		}
+		result = append(result, ProgressPoint{Time: fix.Timestamp, Progress: maxProgress})
+
+		// Done when we reach the goal
+		if maxProgress == totalDist {
+			break
+		}
+	}
+
+	return result
+}
+
 // scoreFrom greedily scores task[1:] starting from the given start split,
 // taking the earliest crossing of each subsequent waypoint in order.
 func scoreFrom(fixes []Fix, task []Waypoint, start Split, interpolate bool) []Split {
