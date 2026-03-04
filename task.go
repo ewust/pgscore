@@ -161,7 +161,7 @@ type xctskFile struct {
 //
 // Type mapping:
 //
-//	"SSS": WPTypeExit  (start: pilot must exit the cylinder)
+//	"SSS": WPTypeExit unless sss.direction == "ENTER" (default assumes EXIT)
 //	"ESS": WPTypeESS
 //	""   : WPTypeGoal on the last turnpoint, WPTypeNormal otherwise
 func ParseXCTaskFile(filename string) ([]Waypoint, error) {
@@ -175,7 +175,8 @@ func ParseXCTaskFile(filename string) ([]Waypoint, error) {
 		return nil, fmt.Errorf("parsing xctsk JSON: %w", err)
 	}
 
-	sssIsExit := f.SSS.Direction == "EXIT"
+	// Default to EXIT when direction is unspecified; ENTER is the only override.
+	sssIsExit := f.SSS.Direction != "ENTER"
 
 	task := make([]Waypoint, 0, len(f.Turnpoints))
 	for i, tp := range f.Turnpoints {
@@ -190,7 +191,9 @@ func ParseXCTaskFile(filename string) ([]Waypoint, error) {
 		case "ESS":
 			wpType = WPTypeESS
 		case "":
-			if i == len(f.Turnpoints)-1 {
+			if i == 0 {
+				wpType = WPTypeExit // assume exit for first turnpoint
+			} else if i == len(f.Turnpoints)-1 {
 				wpType = WPTypeGoal
 			} else {
 				wpType = WPTypeNormal
