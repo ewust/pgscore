@@ -378,15 +378,9 @@ func findAllCrossings(fixes []Fix, from int, wp Waypoint, interpolate bool) []Sp
 		}
 		all = append(all, split)
 		// Advance past this crossing so the next call finds a new one.
-		// For EXIT: achievedIdx is the first fix outside; findExit naturally
-		//           scans forward from there to find the next re-entry.
-		// For ENTRY: achievedIdx is the first fix inside; advance to the
-		//            first fix outside before searching again.
-		if wp.Type == WPTypeExit {
-			searchFrom = achievedIdx
-		} else {
-			searchFrom = firstOutsideIdx(fixes, achievedIdx, wp)
-		}
+		// achievedIdx is already on the new side of the boundary, so
+		// the next findAchievement call will wait for the next flip.
+		searchFrom = achievedIdx
 		if searchFrom >= len(fixes) {
 			break
 		}
@@ -424,7 +418,29 @@ func findAchievement(fixes []Fix, from int, wp Waypoint, interpolate bool) (spli
 	if wp.Type == WPTypeExit {
 		return findExit(fixes, from, wp, interpolate)
 	}
-	return findEntry(fixes, from, wp, interpolate)
+	return findCrossing(fixes, from, wp, interpolate)
+}
+
+// findCrossing finds the first boundary crossing of wp's cylinder at or after
+// from, regardless of direction. It records the initial inside/outside state
+// from fixes[from] and returns the first fix where that state changes.
+func findCrossing(fixes []Fix, from int, wp Waypoint, interpolate bool) (Split, bool, int) {
+	if from >= len(fixes) {
+		return Split{}, false, from
+	}
+	startInside := earthModel.Distance(fixes[from].Lat, fixes[from].Lon, wp.Lat, wp.Lon) <= wp.Radius
+	for i := from + 1; i < len(fixes); i++ {
+		d := earthModel.Distance(fixes[i].Lat, fixes[i].Lon, wp.Lat, wp.Lon)
+		if (d <= wp.Radius) != startInside {
+			t := fixes[i].Timestamp
+			if interpolate {
+				dPrev := earthModel.Distance(fixes[i-1].Lat, fixes[i-1].Lon, wp.Lat, wp.Lon)
+				t = interpolateCrossing(fixes[i-1], fixes[i], dPrev, d, wp.Radius)
+			}
+			return Split{Waypoint: wp, Time: t, Index: i}, true, i
+		}
+	}
+	return Split{}, false, from
 }
 
 // findEntry finds the first fix where the pilot is inside the cylinder.
