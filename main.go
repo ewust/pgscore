@@ -19,6 +19,7 @@ func main() {
 	jsonOut := flag.Bool("json", false, "output results as JSON")
 	vizJSON := flag.Bool("viz-json", false, "output visualization JSON (track, waypoints, splits, optimized route) to stdout")
 	progressOut := flag.Bool("progress", false, "output a JSON array of [unixTimestamp, distanceMeters] progress tuples to stdout")
+	ignoreExit := flag.Bool("ignore-exit", false, "treat the start cylinder as a normal (entry or exit) cylinder even if labelled EXIT in the task")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -95,6 +96,10 @@ func main() {
 		default:
 			taskSource = *taskFile
 		}
+	}
+
+	if *ignoreExit && len(task) > 0 && task[0].Type == WPTypeExit {
+		task[0].Type = WPTypeNormal
 	}
 
 	if len(task) > 0 {
