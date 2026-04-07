@@ -20,6 +20,7 @@ func main() {
 	vizJSON := flag.Bool("viz-json", false, "output visualization JSON (track, waypoints, splits, optimized route) to stdout")
 	progressOut := flag.Bool("progress", false, "output a JSON array of [unixTimestamp, distanceMeters] progress tuples to stdout")
 	ignoreExit := flag.Bool("ignore-exit", false, "treat the start cylinder as a normal (entry or exit) cylinder even if labelled EXIT in the task")
+	thermalFlag := flag.Bool("thermal", false, "detect and print thermals from the IGC tracklog")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -47,6 +48,12 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing IGC file: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *thermalFlag {
+		thermals := GetThermals(flight.Fixes)
+		PrintThermals(thermals)
+		return
 	}
 
 	// Optionally load an external waypoints database.
