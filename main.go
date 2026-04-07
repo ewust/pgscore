@@ -50,9 +50,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	var thermals []Thermal
 	if *thermalFlag {
-		thermals := GetThermals(flight.Fixes)
+		thermals = GetThermals(flight.Fixes)
 		PrintThermals(thermals)
+		if *htmlFile != "" {
+			if err := WriteHTML(*htmlFile, flight, nil, nil, false, thermals); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\nWrote map to %s\n", *htmlFile)
+		}
 		return
 	}
 
@@ -225,7 +233,7 @@ func main() {
 			}
 
 			if *htmlFile != "" {
-				if err := WriteHTML(*htmlFile, flight, task, splits, *debugCrossings); err != nil {
+				if err := WriteHTML(*htmlFile, flight, task, splits, *debugCrossings, nil); err != nil {
 					fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
 					os.Exit(1)
 				}
@@ -236,7 +244,7 @@ func main() {
 		fmt.Printf("\nNo task loaded.\n")
 
 		if *htmlFile != "" {
-			if err := WriteHTML(*htmlFile, flight, nil, nil, false); err != nil {
+			if err := WriteHTML(*htmlFile, flight, nil, nil, false, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing HTML: %v\n", err)
 				os.Exit(1)
 			}

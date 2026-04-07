@@ -31,6 +31,14 @@ type jsSplit struct {
 	Leg     string  `json:"leg"`     // empty for the start split
 }
 
+// jsTrackPoint is a single GPS fix emitted into the HTML map.
+type jsTrackPoint struct {
+	Lat  float64 `json:"lat"`
+	Lon  float64 `json:"lon"`
+	Alt  int     `json:"alt"`
+	Time string  `json:"time"`
+}
+
 // jsDebugPoint is a fix immediately before or after a cylinder crossing,
 // emitted only when debugCrossings is true.
 type jsDebugPoint struct {
@@ -124,7 +132,7 @@ func WriteVisualizationJSON(w io.Writer, flight *Flight, task []Waypoint, splits
 //   - the flight track as a blue polyline
 //   - each task waypoint as a labelled circle
 //   - each achieved split as a marker with a popup
-func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split, debugCrossings bool) error {
+func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split, debugCrossings bool, thermals []Thermal) error {
 	f, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -132,10 +140,15 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split,
 	defer f.Close()
 
 	// Build track points, skipping invalid fixes to avoid jumps to 0,0.
-	track := make([]jsLatLon, 0, len(flight.Fixes))
+	track := make([]jsTrackPoint, 0, len(flight.Fixes))
 	for _, fix := range flight.Fixes {
 		if fix.Valid {
-			track = append(track, jsLatLon{fix.Lat, fix.Lon})
+			track = append(track, jsTrackPoint{
+				Lat:  fix.Lat,
+				Lon:  fix.Lon,
+				Alt:  fix.GNSSAlt,
+				Time: fix.Timestamp.Format("15:04:05 UTC"),
+			})
 		}
 	}
 
@@ -208,6 +221,28 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split,
 		}
 	}
 
+	for i, t := range thermals {
+		label := fmt.Sprintf("thermal %d", i+1)
+		if t.StartIdx < len(flight.Fixes) {
+			s := flight.Fixes[t.StartIdx]
+			debugPoints = append(debugPoints, jsDebugPoint{
+				Lat:   s.Lat,
+				Lon:   s.Lon,
+				Label: label + " start",
+				Time:  s.Timestamp.Format("15:04:05 UTC"),
+			})
+		}
+		if t.EndIdx < len(flight.Fixes) {
+			e := flight.Fixes[t.EndIdx]
+			debugPoints = append(debugPoints, jsDebugPoint{
+				Lat:   e.Lat,
+				Lon:   e.Lon,
+				Label: fmt.Sprintf("%s end (%s, +%.2fm/s)", label, formatDuration(t.Duration()), t.ClimbRate()),
+				Time:  e.Timestamp.Format("15:04:05 UTC"),
+			})
+		}
+	}
+
 	trackJSON, err := json.Marshal(track)
 	if err != nil {
 		return fmt.Errorf("marshalling track: %w", err)
@@ -247,6 +282,7 @@ const leafletHTML = `<!DOCTYPE html>
   <meta charset="utf-8" />
   <title>%s</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     html, body { height: 100%%; margin: 0; padding: 0; font-family: sans-serif; }
@@ -356,6 +392,38 @@ if (trackLayer) {
                 {padding: [40, 40]});
 } else {
   map.setView([0, 0], 2);
+}
+
+// -- Snap marker: follows the nearest track point on mousemove
+if (trackPoints.length > 0) {
+  var snapMarker = L.circleMarker(trackPoints[0], {
+    radius: 5, color: '#fff', fillColor: '#2980b9', fillOpacity: 1, weight: 2,
+    interactive: false
+  });
+  snapMarker.bindTooltip('', {permanent: true, direction: 'top', offset: [0, -6]});
+
+  var snapThresholdPx = 20;
+  map.on('mousemove', function(e) {
+    var lat = e.latlng.lat, lon = e.latlng.lng;
+    var best = 0, bestDist = Infinity;
+    for (var i = 0; i < trackPoints.length; i++) {
+      var dlat = trackPoints[i].lat - lat, dlon = trackPoints[i].lon - lon;
+      var d = dlat * dlat + dlon * dlon;
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    var p = trackPoints[best];
+    var mouseCP = e.containerPoint;
+    var pointCP = map.latLngToContainerPoint([p.lat, p.lon]);
+    var dx = mouseCP.x - pointCP.x, dy = mouseCP.y - pointCP.y;
+    if (Math.sqrt(dx*dx + dy*dy) > snapThresholdPx) {
+      snapMarker.remove();
+      return;
+    }
+    if (!map.hasLayer(snapMarker)) { snapMarker.addTo(map); }
+    snapMarker.setLatLng([p.lat, p.lon]);
+    snapMarker.setTooltipContent(p.time + ' \u2014 ' + p.alt + 'm');
+  });
+  map.on('mouseout', function() { snapMarker.remove(); });
 }
 </script>
 </body>

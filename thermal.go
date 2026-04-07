@@ -9,12 +9,13 @@ const thermalNoiseThreshold = 10 // meters
 
 // Thermal represents a single detected thermal.
 type Thermal struct {
-	StartIdx  int
-	EndIdx    int
-	StartTime time.Time
-	EndTime   time.Time
-	StartAlt  int
-	EndAlt    int
+	StartIdx      int
+	EndIdx        int
+	StartTime     time.Time
+	EndTime       time.Time
+	StartAlt      int
+	EndAlt        int
+	PeakClimbRate float64 // m/s, maximum climb rate between any two consecutive fixes
 }
 
 // Duration returns the thermal duration.
@@ -49,8 +50,9 @@ func GetThermals(fixes []Fix) []Thermal {
 
 	// State: searching for thermal start.
 	searching := true
-	baseIdx := 0 // index of local minimum (thermal start candidate)
-	peakIdx := 0 // index of local maximum (thermal end candidate)
+	baseIdx := 0    // index of local minimum (thermal start candidate)
+	peakIdx := 0    // index of local maximum (thermal end candidate)
+	maxClimbRate := 0.0
 
 	for i, fix := range fixes {
 		alt := fix.GNSSAlt
@@ -64,8 +66,19 @@ func GetThermals(fixes []Fix) []Thermal {
 			if alt >= fixes[baseIdx].GNSSAlt+thermalNoiseThreshold {
 				searching = false
 				peakIdx = i
+				maxClimbRate = 0
 			}
 		} else {
+			// Track per-fix climb rate.
+			if i > 0 {
+				dt := fix.Timestamp.Sub(fixes[i-1].Timestamp).Seconds()
+				if dt > 0 {
+					rate := float64(alt-fixes[i-1].GNSSAlt) / dt
+					if rate > maxClimbRate {
+						maxClimbRate = rate
+					}
+				}
+			}
 			// In a thermal: track the local maximum.
 			if alt >= fixes[peakIdx].GNSSAlt {
 				peakIdx = i
@@ -73,12 +86,13 @@ func GetThermals(fixes []Fix) []Thermal {
 			// If we've dropped thermalNoiseThreshold below the peak, thermal ended.
 			if alt <= fixes[peakIdx].GNSSAlt-thermalNoiseThreshold {
 				thermals = append(thermals, Thermal{
-					StartIdx:  baseIdx,
-					EndIdx:    peakIdx,
-					StartTime: fixes[baseIdx].Timestamp,
-					EndTime:   fixes[peakIdx].Timestamp,
-					StartAlt:  fixes[baseIdx].GNSSAlt,
-					EndAlt:    fixes[peakIdx].GNSSAlt,
+					StartIdx:      baseIdx,
+					EndIdx:        peakIdx,
+					StartTime:     fixes[baseIdx].Timestamp,
+					EndTime:       fixes[peakIdx].Timestamp,
+					StartAlt:      fixes[baseIdx].GNSSAlt,
+					EndAlt:        fixes[peakIdx].GNSSAlt,
+					PeakClimbRate: maxClimbRate,
 				})
 				// Start searching again from the current peak.
 				searching = true
@@ -98,15 +112,16 @@ func PrintThermals(thermals []Thermal) {
 		return
 	}
 	fmt.Printf("\n--- Thermals (%d) ---\n", len(thermals))
-	fmt.Printf("%-4s  %-10s  %-10s  %-8s  %-6s\n",
-		"#", "Start", "Duration", "Gain(m)", "Avg(m/s)")
+	fmt.Printf("%-4s  %-10s  %-10s  %-8s  %-10s  %-10s\n",
+		"#", "Start", "Duration", "Gain(m)", "Avg(m/s)", "Peak(m/s)")
 	for i, t := range thermals {
-		fmt.Printf("%-4d  %-10s  %-10s  %-8d  +%.2f\n",
+		fmt.Printf("%-4d  %-10s  %-10s  %-8d  +%-9.2f  +%-9.2f\n",
 			i+1,
 			t.StartTime.Format("15:04:05"),
 			formatDuration(t.Duration()),
 			t.AltGain(),
 			t.ClimbRate(),
+			t.PeakClimbRate,
 		)
 	}
 }
