@@ -21,6 +21,10 @@ func main() {
 	progressOut := flag.Bool("progress", false, "output a JSON array of [unixTimestamp, distanceMeters] progress tuples to stdout")
 	ignoreExit := flag.Bool("ignore-exit", false, "treat the start cylinder as a normal (entry or exit) cylinder even if labelled EXIT in the task")
 	thermalFlag := flag.Bool("thermal", false, "detect and print thermals from the IGC tracklog")
+	vsdistFile := flag.String("vsdist", "", "write vertical speed distribution TSV to this file")
+	vsdistStep := flag.Float64("vsdistStep", 1.0, "vertical speed bucket width in m/s for vsdist output")
+	thermalDistFile := flag.String("thermalDist", "", "write thermal-only vertical speed distribution TSV to this file")
+	thermalDistStep := flag.Float64("thermalDistStep", 1.0, "vertical speed bucket width in m/s for thermalDist output")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <flight.igc>\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -48,6 +52,25 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing IGC file: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *vsdistFile != "" {
+		if err := WriteVSDist(flight.Fixes, *vsdistFile, *vsdistStep); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing vertical speed distribution: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Wrote vertical speed distribution to %s\n", *vsdistFile)
+		return
+	}
+
+	if *thermalDistFile != "" {
+		thermals := GetThermals(flight.Fixes)
+		if err := WriteThermalVSDist(flight.Fixes, thermals, *thermalDistFile, *thermalDistStep); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing thermal vertical speed distribution: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Wrote thermal vertical speed distribution to %s\n", *thermalDistFile)
+		return
 	}
 
 	var thermals []Thermal

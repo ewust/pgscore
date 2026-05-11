@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"math"
+	"os"
 	"time"
 )
 
@@ -103,6 +106,72 @@ func GetThermals(fixes []Fix) []Thermal {
 	}
 
 	return thermals
+}
+
+const vsdistCutoff = 15.0 // m/s
+
+// writeVSDist is the shared core: it accumulates vertical-speed buckets from
+// the provided index pairs and writes a TSV to filename.
+func writeVSDist(fixes []Fix, pairs [][2]int, filename string, step float64) error {
+	minB := int(math.Round(-vsdistCutoff / step))
+	maxB := int(math.Round(vsdistCutoff / step))
+	counts := make(map[int]float64)
+
+	for _, p := range pairs {
+		prev, cur := p[0], p[1]
+		dt := fixes[cur].Timestamp.Sub(fixes[prev].Timestamp).Seconds()
+		if dt <= 0 {
+			continue
+		}
+		vs := float64(fixes[cur].GNSSAlt-fixes[prev].GNSSAlt) / dt
+		vs = math.Max(-vsdistCutoff, math.Min(vsdistCutoff, vs))
+		counts[int(math.Round(vs/step))] += dt
+	}
+
+	if len(counts) == 0 {
+		return nil
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+	fmt.Fprintf(w, "vertical_speed_ms\ttime_seconds\n")
+	for b := minB; b <= maxB; b++ {
+		fmt.Fprintf(w, "%.4f\t%.1f\n", float64(b)*step, counts[b])
+	}
+	return w.Flush()
+}
+
+// WriteVSDist computes a vertical speed distribution over all consecutive fix
+// pairs in the flight and writes a TSV to filename.
+func WriteVSDist(fixes []Fix, filename string, step float64) error {
+	if len(fixes) < 2 || step <= 0 {
+		return nil
+	}
+	pairs := make([][2]int, len(fixes)-1)
+	for i := range pairs {
+		pairs[i] = [2]int{i, i + 1}
+	}
+	return writeVSDist(fixes, pairs, filename, step)
+}
+
+// WriteThermalVSDist computes a vertical speed distribution restricted to fix
+// pairs that fall within detected thermal windows and writes a TSV to filename.
+func WriteThermalVSDist(fixes []Fix, thermals []Thermal, filename string, step float64) error {
+	if len(fixes) < 2 || step <= 0 {
+		return nil
+	}
+	var pairs [][2]int
+	for _, t := range thermals {
+		for i := t.StartIdx + 1; i <= t.EndIdx; i++ {
+			pairs = append(pairs, [2]int{i - 1, i})
+		}
+	}
+	return writeVSDist(fixes, pairs, filename, step)
 }
 
 // PrintThermals prints a summary of detected thermals to stdout.
