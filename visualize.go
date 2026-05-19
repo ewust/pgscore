@@ -33,10 +33,11 @@ type jsSplit struct {
 
 // jsTrackPoint is a single GPS fix emitted into the HTML map.
 type jsTrackPoint struct {
-	Lat  float64 `json:"lat"`
-	Lon  float64 `json:"lon"`
-	Alt  int     `json:"alt"`
-	Time string  `json:"time"`
+	Lat       float64 `json:"lat"`
+	Lon       float64 `json:"lon"`
+	Alt       int     `json:"alt"`
+	Time      string  `json:"time"`
+	ClimbRate float64 `json:"climbRate"`
 }
 
 // jsDebugPoint is a fix immediately before or after a cylinder crossing,
@@ -139,15 +140,34 @@ func WriteHTML(filename string, flight *Flight, task []Waypoint, splits []Split,
 	}
 	defer f.Close()
 
+	// Compute 3-second rolling climb rate for each fix.
+	climbRates := make([]float64, len(flight.Fixes))
+	for i, fix := range flight.Fixes {
+		if !fix.Valid {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			if !flight.Fixes[j].Valid {
+				continue
+			}
+			dt := fix.Timestamp.Sub(flight.Fixes[j].Timestamp).Seconds()
+			if dt >= 3.0 {
+				climbRates[i] = float64(fix.GNSSAlt-flight.Fixes[j].GNSSAlt) / dt
+				break
+			}
+		}
+	}
+
 	// Build track points, skipping invalid fixes to avoid jumps to 0,0.
 	track := make([]jsTrackPoint, 0, len(flight.Fixes))
-	for _, fix := range flight.Fixes {
+	for i, fix := range flight.Fixes {
 		if fix.Valid {
 			track = append(track, jsTrackPoint{
-				Lat:  fix.Lat,
-				Lon:  fix.Lon,
-				Alt:  fix.GNSSAlt,
-				Time: fix.Timestamp.Format("15:04:05 UTC"),
+				Lat:       fix.Lat,
+				Lon:       fix.Lon,
+				Alt:       fix.GNSSAlt,
+				Time:      fix.Timestamp.Format("15:04:05 UTC"),
+				ClimbRate: climbRates[i],
 			})
 		}
 	}
@@ -299,7 +319,12 @@ const leafletHTML = `<!DOCTYPE html>
 <div id="map"></div>
 <div id="info">
   <h3>%s</h3>
-  <div><span class="legend-dot" style="background:#2980b9"></span>Flight track</div>
+  <div style="margin-bottom:4px">Flight track (climb rate)</div>
+  <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
+    <span style="font-size:11px">-3</span>
+    <span style="flex:1;height:8px;background:linear-gradient(to right,#2980b9,#27ae60,#f39c12,#c0392b);border-radius:2px"></span>
+    <span style="font-size:11px">+5 m/s</span>
+  </div>
   <div><span class="legend-dot" style="background:#27ae60"></span>Start (EXIT)</div>
   <div><span class="legend-dot" style="background:#2980b9"></span>Turnpoint</div>
   <div><span class="legend-dot" style="background:#e67e22"></span>ESS</div>
@@ -307,6 +332,7 @@ const leafletHTML = `<!DOCTYPE html>
   <div><span class="legend-dot" style="background:#f39c12"></span>Split</div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-hotline@0.4.0/dist/leaflet.hotline.js"></script>
 <script>
 var trackPoints    = %s;
 var waypoints      = %s;
@@ -322,17 +348,23 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18
 }).addTo(map);
 
-// -- Flight track
+// -- Flight track (colored by climb rate via hotline)
 var trackLayer = null;
 if (trackPoints.length > 0) {
-  var latlngs = trackPoints.map(function(p) { return [p.lat, p.lon]; });
-  trackLayer = L.polyline(latlngs, {color: '#2980b9', weight: 2, opacity: 0.8}).addTo(map);
+  var hotlineData = trackPoints.map(function(p) { return [p.lat, p.lon, p.climbRate]; });
+  trackLayer = L.hotline(hotlineData, {
+    min: -3, max: 5,
+    palette: {0.0: '#2980b9', 0.375: '#27ae60', 0.625: '#f39c12', 1.0: '#c0392b'},
+    weight: 3,
+    outlineWidth: 0
+  }).addTo(map);
 
-  L.circleMarker(latlngs[0], {
+  var first = trackPoints[0], last = trackPoints[trackPoints.length - 1];
+  L.circleMarker([first.lat, first.lon], {
     radius: 5, color: '#27ae60', fillColor: '#27ae60', fillOpacity: 1, weight: 2
   }).bindTooltip('Track start').addTo(map);
 
-  L.circleMarker(latlngs[latlngs.length - 1], {
+  L.circleMarker([last.lat, last.lon], {
     radius: 5, color: '#c0392b', fillColor: '#c0392b', fillOpacity: 1, weight: 2
   }).bindTooltip('Track end').addTo(map);
 }
